@@ -1,14 +1,21 @@
-﻿using System.Globalization;
+﻿using Microsoft.EntityFrameworkCore;
+using System.Globalization;
+
 public class Program
 {
     public static void Main(string[] args)
     {
-        var bankingApp = new AwesomeGICBankApp();
+        using (var context = new ApplicationDbContext())
+        {
+            context.Database.EnsureCreated();
+        }
+
+        var bankingApp = new AwesomeGICBankApplication();
         bankingApp.Run();
     }
 }
 
-public class AwesomeGICBankApp
+public class AwesomeGICBankApplication
 {
     public void Run()
     {
@@ -66,9 +73,9 @@ public class AwesomeGICBankApp
             var type = parts[2].ToUpper();
             var amountStr = parts[3];
 
-            if (!DateTime.TryParseExact(date, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+            if (!DateTime.TryParseExact(parts[0], "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out DateTime dateObj))
             {
-                Console.WriteLine("Invalid date format. Please use YYYYMMdd.");
+                Console.WriteLine("Invalid date format. Please use YYYYMMdd format.");
                 return;
             }
 
@@ -78,12 +85,13 @@ public class AwesomeGICBankApp
                 return;
             }
 
-            // todo Create if account not exists
+            var account = Account.GetAccount(accountNumber);
 
+            Console.WriteLine("account ", account);
             if (type == "D")
             {
                 Console.WriteLine("D");
-                // deposit to account
+                account.Deposit(dateObj, amount);
             }
             else if (type == "W")
             {
@@ -97,7 +105,7 @@ public class AwesomeGICBankApp
             }
 
             Console.WriteLine("Transaction recorded successfully.");
-            
+
         }
         else
         {
@@ -120,4 +128,90 @@ public class AwesomeGICBankApp
         Console.WriteLine("Thank you for banking with AwesomeGIC Bank.");
         Console.WriteLine("Have a nice day!");
     }
+}
+
+public class Transaction
+{
+    public int TransactionId { get; set; }
+    public DateTime Date { get; set; }
+    public string Account { get; set; }
+    public string Type { get; set; }
+    public decimal Amount { get; set; }
+}
+
+public class InterestRule
+{
+    public int InterestRuleId { get; set; }
+    public DateTime Date { get; set; }
+    public string RuleId { get; set; }
+    public decimal Rate { get; set; }
+}
+
+public class ApplicationDbContext : DbContext
+{
+    public DbSet<Transaction> Transactions { get; set; }
+    public DbSet<InterestRule> InterestRules { get; set; }
+    public DbSet<Account> Accounts { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlite("Data Source=testDb.db");
+    }
+
+}
+
+public class Account
+{
+    public int AccountId { get; set; }
+    public string AccountNumber { get; set; }
+    private readonly ApplicationDbContext context;
+
+    protected Account()
+    {
+        context = new ApplicationDbContext();
+    }
+    public Account(string accountNumber)
+    {
+        AccountNumber = accountNumber;
+        context = new ApplicationDbContext();
+        context.Database.EnsureCreated();
+    }
+
+    public static Account GetAccount(string accountNumber)
+    {
+        using var context = new ApplicationDbContext();
+        var existingAccount = context.Accounts.AsEnumerable().FirstOrDefault(a => a.AccountNumber == accountNumber);
+
+        if (existingAccount == null)
+        {
+            existingAccount = new Account(accountNumber);
+            context.Accounts.Add(existingAccount);
+            context.SaveChanges();
+        }
+
+        return existingAccount;
+    }
+
+    public void Deposit(DateTime date, decimal amount)
+    {
+        if (amount <= 0)
+        {
+            Console.WriteLine("Invalid deposit amount.");
+            return;
+        }
+
+        var transaction = new Transaction
+        {
+            Date = date,
+            Account = AccountNumber,
+            Type = "D",
+            Amount = amount
+        };
+
+        context.Transactions.Add(transaction);
+        context.SaveChanges();
+        Console.WriteLine("result : ");
+        Console.WriteLine(context.Accounts.AsEnumerable().ToList()?.Count);
+    }
+
 }
