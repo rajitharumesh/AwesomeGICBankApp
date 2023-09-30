@@ -3,6 +3,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.Extensions.DependencyInjection;
 using System.Security.Principal;
+using System;
 
 public class Program
 {
@@ -19,7 +20,7 @@ public class Program
         using (var scope = serviceProvider.CreateScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var app = new AwesomeGICBankApplication(dbContext); // Pass the context
+            var app = new AwesomeGICBankApplication(dbContext);
             app.Run();
         }
     }
@@ -140,13 +141,169 @@ public class AwesomeGICBankApplication
 
     public void DefineInterestRules()
     {
-        Console.WriteLine("DefineInterestRules");
+        Console.WriteLine("Please enter interest rule details in <Date> <RuleId> <Rate in %>");
+        Console.WriteLine("(or enter blank to go back to the main menu):");
+        Console.Write("> ");
+
+        var input = Console.ReadLine()?.Trim();
+        if (string.IsNullOrWhiteSpace(input))
+            return;
+
+        var ruleDetails = input.Split(' ');
+        if (ruleDetails.Length != 3)
+        {
+            Console.WriteLine("Invalid input format. Please enter details in the correct format.");
+            return;
+        }
+
+        if (!DateTime.TryParseExact(ruleDetails[0], "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out var date))
+        {
+            Console.WriteLine("Invalid date format. Please use YYYYMMdd format.");
+            return;
+        }
+
+        var ruleId = ruleDetails[1];
+        if (string.IsNullOrWhiteSpace(ruleId))
+        {
+            Console.WriteLine("RuleId cannot be empty.");
+            return;
+        }
+
+        if (!decimal.TryParse(ruleDetails[2], out var rate) || rate <= 0 || rate >= 100)
+        {
+            Console.WriteLine("Invalid interest rate. Rate should be greater than 0 and less than 100.");
+            return;
+        }
+
+        // Check if there are existing rules on the same day
+        var existingRuleOnDate = dbContext.InterestRules
+            .Where(r => r.Date == date)
+            .OrderByDescending(r => r.Date)
+            .FirstOrDefault();
+
+        if (existingRuleOnDate != null)
+        {
+            Console.WriteLine("An interest rule already exists for this date. The latest rule will be kept.");
+            existingRuleOnDate.RuleId = ruleId;
+            existingRuleOnDate.Rate = rate;
+        }
+        else
+        {
+            // Create and save the interest rule
+            var interestRule = new InterestRule
+            {
+                Date = date,
+                RuleId = ruleId,
+                Rate = rate
+            };
+
+            dbContext.InterestRules.Add(interestRule);
+        }
+
+        dbContext.SaveChanges();
+
+        // Display all interest rules ordered by date
+        var interestRules = dbContext.InterestRules.OrderBy(r => r.Date).ToList();
+
+        Console.WriteLine("Interest rules:");
+        Console.WriteLine("| Date     | RuleId | Rate (%) |");
+        foreach (var rule in interestRules)
+        {
+            Console.WriteLine($"| {rule.Date:yyyyMMdd} | {rule.RuleId} | {rule.Rate:F2} |");
+        }
     }
 
     public void PrintStatement()
     {
-        Console.WriteLine("PrintStatement");
+        Console.WriteLine("Please enter account and month to generate the statement <Account> <Year><Month>");
+        Console.WriteLine("(or enter blank to go back to main menu):");
+        Console.Write("> ");
+
+        var input = Console.ReadLine()?.Trim();
+        if (string.IsNullOrWhiteSpace(input))
+            return;
+
+        var statementDetails = input.Split(' ');
+        if (statementDetails.Length != 2)
+        {
+            Console.WriteLine("Invalid input format. Please enter account and month in the correct format.");
+            return;
+        }
+
+        var accountNumber = statementDetails[0];
+        var yearMonth = statementDetails[1];
+
+        if (!int.TryParse(yearMonth.Substring(0, 4), out var year) ||
+            !int.TryParse(yearMonth.Substring(4, 2), out var month))
+        {
+            Console.WriteLine("Invalid year and month format. Please use YYYYMM format.");
+            return;
+        }
+
+        // Retrieve the account or create it if it doesn't exist
+        var account = new Account(accountNumber, dbContext);
+        account.CreateAccountIfNotExist(accountNumber);
+
+        if (account == null)
+        {
+            Console.WriteLine("Account not found or creation failed.");
+            return;
+        }
+
+        // Calculate and print the account statement
+        PrintAccountStatement(account, year, month);
     }
+
+    private void PrintAccountStatement(Account account, int year, int month)
+    {
+        Console.WriteLine($"Account: {account.AccountNumber}");
+        Console.WriteLine("| Date     | Txn Id      | Type | Amount | Balance |");
+
+        var startDate = new DateTime(year, month, 1);
+        var endDate = startDate.AddMonths(1).AddDays(-1);
+
+        var transactions = dbContext.Transactions
+            .Where(t => t.AccountNumber == account.AccountNumber && t.Date >= startDate && t.Date <= endDate)
+            .OrderBy(t => t.Date)
+            .ToList();
+
+        decimal balance = 0;
+
+        foreach (var transaction in transactions)
+        {
+            if (transaction.Type == "D")
+            {
+                balance += transaction.Amount;
+            }
+            else if (transaction.Type == "W")
+            {
+                balance -= transaction.Amount;
+            }
+
+            Console.WriteLine($"| {transaction.Date:yyyyMMdd} | {transaction.TransactionId} | {transaction.Type}    | {transaction.Amount:F2}  | {balance:F2}  |");
+        }
+
+        // Calculate and apply interest for the month
+        var interestRate = GetInterestRateForDate(account.AccountNumber, startDate);
+        if (interestRate > 0)
+        {
+            var daysInMonth = DateTime.DaysInMonth(year, month);
+            var interestAmount = (balance * (interestRate / 100)) * (daysInMonth / 365);
+
+            // Display the interest transaction
+            Console.WriteLine($"| {endDate:yyyyMMdd} |             | I    | {interestAmount:F2}  | {balance + interestAmount:F2}  |");
+        }
+    }
+
+    private decimal GetInterestRateForDate(string accountNumber, DateTime date)
+    {
+        return dbContext.InterestRules
+            .Where(r => r.Date <= date && r.RuleId == "RULE03")
+            .OrderByDescending(r => r.Date)
+            .Select(r => r.Rate)
+            .FirstOrDefault();
+    }
+
 
     public void Quit()
     {
@@ -351,5 +508,6 @@ public class Account
         }
         return false;
     }
+
 
 }
