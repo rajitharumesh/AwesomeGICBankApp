@@ -1,22 +1,37 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using System.Globalization;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.Extensions.DependencyInjection;
 
 public class Program
 {
     public static void Main(string[] args)
     {
-        using (var context = new ApplicationDbContext())
-        {
-            context.Database.EnsureCreated();
-        }
+        var serviceProvider = new ServiceCollection()
+            .AddDbContext<ApplicationDbContext>(options =>
+            {
+                options.UseInMemoryDatabase("bankapp");
+            })
+            .AddScoped<AwesomeGICBankApplication>()
+            .BuildServiceProvider();
 
-        var bankingApp = new AwesomeGICBankApplication();
-        bankingApp.Run();
+        using (var scope = serviceProvider.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var app = new AwesomeGICBankApplication(dbContext); // Pass the context
+            app.Run();
+        }
     }
 }
 
 public class AwesomeGICBankApplication
 {
+    private readonly ApplicationDbContext dbContext;
+
+    public AwesomeGICBankApplication(ApplicationDbContext dbContext)
+    {
+        this.dbContext = dbContext;
+    }
     public void Run()
     {
         while (true)
@@ -57,59 +72,61 @@ public class AwesomeGICBankApplication
 
     public void InputTransactions()
     {
-        Console.WriteLine("Please enter transaction details in <Date> <Account> <Type> <Amount> format");
-        Console.WriteLine("(or enter blank to go back to the main menu):");
-        Console.Write("> ");
-        var input = Console.ReadLine();
-
-        if (string.IsNullOrWhiteSpace(input))
-            return;
-
-        var parts = input.Split(' ');
-        if (parts.Length == 4)
+        while (true)
         {
-            var date = parts[0];
-            var accountNumber = parts[1];
-            var type = parts[2].ToUpper();
-            var amountStr = parts[3];
+            Console.WriteLine("Please enter transaction details in <Date> <Account> <Type> <Amount> format");
+            Console.WriteLine("(or enter blank to go back to the main menu):");
+            Console.Write("> ");
+            var input = Console.ReadLine();
 
-            if (!DateTime.TryParseExact(parts[0], "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out DateTime dateObj))
-            {
-                Console.WriteLine("Invalid date format. Please use YYYYMMdd format.");
+            if (string.IsNullOrWhiteSpace(input))
                 return;
-            }
 
-            if (!decimal.TryParse(amountStr, out var amount) || amount <= 0)
+            var parts = input.Split(' ');
+            if (parts.Length == 4)
             {
-                Console.WriteLine("Invalid amount. Please enter a positive number.");
-                return;
-            }
+                var date = parts[0];
+                var accountNumber = parts[1];
+                var type = parts[2].ToUpper();
+                var amountStr = parts[3];
 
-            var account = Account.GetAccount(accountNumber);
+                if (!DateTime.TryParseExact(date, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out DateTime dateObj))
+                {
+                    Console.WriteLine("Invalid date format. Please use YYYYMMdd format.");
+                    return;
+                }
 
-            Console.WriteLine("account ", account);
-            if (type == "D")
-            {
-                Console.WriteLine("D");
-                account.Deposit(dateObj, amount);
-            }
-            else if (type == "W")
-            {
-                Console.WriteLine("W");
-                // withdraw from account
+                if (!decimal.TryParse(amountStr, out var amount) || amount <= 0)
+                {
+                    Console.WriteLine("Invalid amount. Please enter a positive number.");
+                    return;
+                }
+
+                var account = new Account(accountNumber, dbContext);
+
+                if (type == "D")
+                {
+                    Console.WriteLine("D");
+                    account.Deposit(dateObj, amount);
+                }
+                else if (type == "W")
+                {
+                    Console.WriteLine("W");
+                    // withdraw from account
+                }
+                else
+                {
+                    Console.WriteLine("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.");
+                    return;
+                }
+
+                Console.WriteLine("Transaction recorded successfully.");
+
             }
             else
             {
-                Console.WriteLine("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.");
-                return;
+                Console.WriteLine("Invalid input format. Please use <Date> <Account> <Type> <Amount>.");
             }
-
-            Console.WriteLine("Transaction recorded successfully.");
-
-        }
-        else
-        {
-            Console.WriteLine("Invalid input format. Please use <Date> <Account> <Type> <Amount>.");
         }
     }
 
@@ -132,10 +149,18 @@ public class AwesomeGICBankApplication
 
 public class Transaction
 {
-    public int TransactionId { get; set; }
+    public int Id { get; set; }
+    public string TransactionId { get; set; }
+
+    [Required]
+    [DataType(DataType.DateTime)] // Specify the data type as DateTime
     public DateTime Date { get; set; }
-    public string Account { get; set; }
+
+    public string AccountNumber { get; set; }
     public string Type { get; set; }
+
+
+    [Column(TypeName = "decimal(18,2)")] // Specify the data type as decimal(18,2)
     public decimal Amount { get; set; }
 }
 
@@ -155,9 +180,11 @@ public class ApplicationDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        optionsBuilder.UseSqlite("Data Source=testDb.db");
+        if (!optionsBuilder.IsConfigured)
+        {
+            optionsBuilder.UseInMemoryDatabase("bankapp");
+        }
     }
-
 }
 
 public class Account
@@ -166,25 +193,19 @@ public class Account
     public string AccountNumber { get; set; }
     private readonly ApplicationDbContext context;
 
-    protected Account()
-    {
-        context = new ApplicationDbContext();
-    }
-    public Account(string accountNumber)
+    public Account(string accountNumber, ApplicationDbContext dbContext)
     {
         AccountNumber = accountNumber;
-        context = new ApplicationDbContext();
-        context.Database.EnsureCreated();
+        context = dbContext;
     }
 
-    public static Account GetAccount(string accountNumber)
+    public Account GetAccount(string accountNumber)
     {
-        using var context = new ApplicationDbContext();
         var existingAccount = context.Accounts.AsEnumerable().FirstOrDefault(a => a.AccountNumber == accountNumber);
 
         if (existingAccount == null)
         {
-            existingAccount = new Account(accountNumber);
+            existingAccount = new Account(accountNumber, context);
             context.Accounts.Add(existingAccount);
             context.SaveChanges();
         }
@@ -200,18 +221,57 @@ public class Account
             return;
         }
 
-        var transaction = new Transaction
+        try
         {
-            Date = date,
-            Account = AccountNumber,
-            Type = "D",
-            Amount = amount
-        };
+            var transactionId = GenerateTransactionId(AccountNumber, date);
 
-        context.Transactions.Add(transaction);
-        context.SaveChanges();
+            var transactionObj = new Transaction
+            {
+                TransactionId = transactionId,
+                Date = date,
+                AccountNumber = AccountNumber,
+                Type = "D",
+                Amount = amount
+            };
+
+            context.Transactions.Add(transactionObj);
+            context.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+            Console.WriteLine(ex.InnerException?.Message);
+        }
         Console.WriteLine("result : ");
-        Console.WriteLine(context.Accounts.AsEnumerable().ToList()?.Count);
+        Console.WriteLine(context.Transactions.AsEnumerable().ToList()?.Count);
+    }
+
+
+    public string GenerateTransactionId(string accountNumber, DateTime date)
+    {
+        int transactionCount = 0;
+        try
+        {
+            var transactions = context.Transactions
+                .Where(t => t.AccountNumber == accountNumber)
+                .AsEnumerable() // Switch to in-memory LINQ
+                .Where(t => t.Date.Date == date.Date)
+                .ToList();
+            transactionCount = transactions.Count;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+            Console.WriteLine(ex.InnerException?.Message);
+        }
+
+        // Format the date as YYYYMMdd
+        string formattedDate = date.ToString("yyyyMMdd");
+
+        // Generate a unique transaction ID by appending a running number
+        string transactionId = $"{formattedDate}-{(transactionCount + 1):D2}";
+
+        return transactionId;
     }
 
 }
