@@ -2,6 +2,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Principal;
 
 public class Program
 {
@@ -103,7 +104,14 @@ public class AwesomeGICBankApplication
                 }
 
                 var account = new Account(accountNumber, dbContext);
+                account.CreateAccountIfNotExist(accountNumber);
 
+                var isFirstTransactionWithdraw = account.CheckIsFirstTransaction(accountNumber, type);
+                if (isFirstTransactionWithdraw)
+                {
+                    Console.WriteLine("The first transaction on an account cannot be a withdrawal.");
+                    return;
+                }
                 if (type == "D")
                 {
                     Console.WriteLine("D");
@@ -112,7 +120,7 @@ public class AwesomeGICBankApplication
                 else if (type == "W")
                 {
                     Console.WriteLine("W");
-                    // withdraw from account
+                    account.Withdraw(dateObj, amount);
                 }
                 else
                 {
@@ -185,6 +193,16 @@ public class ApplicationDbContext : DbContext
             optionsBuilder.UseInMemoryDatabase("bankapp");
         }
     }
+
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+    {
+    }
+
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+    }
+
 }
 
 public class Account
@@ -199,7 +217,7 @@ public class Account
         context = dbContext;
     }
 
-    public Account GetAccount(string accountNumber)
+    public Account CreateAccountIfNotExist(string accountNumber)
     {
         var existingAccount = context.Accounts.AsEnumerable().FirstOrDefault(a => a.AccountNumber == accountNumber);
 
@@ -242,10 +260,7 @@ public class Account
             Console.WriteLine(ex.Message);
             Console.WriteLine(ex.InnerException?.Message);
         }
-        Console.WriteLine("result : ");
-        Console.WriteLine(context.Transactions.AsEnumerable().ToList()?.Count);
     }
-
 
     public string GenerateTransactionId(string accountNumber, DateTime date)
     {
@@ -272,6 +287,69 @@ public class Account
         string transactionId = $"{formattedDate}-{(transactionCount + 1):D2}";
 
         return transactionId;
+    }
+
+    public decimal CalculateBalance()
+    {
+        var deposits = context.Transactions
+            .Where(t => t.AccountNumber == AccountNumber && t.Type == "D")
+            .Sum(t => t.Amount);
+
+        var withdrawals = context.Transactions
+            .Where(t => t.AccountNumber == AccountNumber && t.Type == "W")
+            .Sum(t => t.Amount);
+
+        return deposits - withdrawals;
+    }
+
+    public void Withdraw(DateTime date, decimal amount)
+    {
+        if (amount <= 0)
+        {
+            Console.WriteLine("Invalid withdrawal amount.");
+            return;
+        }
+
+        var balance = CalculateBalance();
+        if (balance < amount)
+        {
+            Console.WriteLine("Insufficient balance.");
+            return;
+        }
+
+        var transactionId = GenerateTransactionId(AccountNumber, date);
+        var transaction = new Transaction
+        {
+            TransactionId = transactionId,
+            Date = date,
+            AccountNumber = AccountNumber,
+            Type = "W",
+            Amount = amount
+        };
+
+        context.Transactions.Add(transaction);
+        context.SaveChanges();
+
+
+        Console.WriteLine("result : ");
+
+        var test = context.Transactions.AsEnumerable().ToList();
+        for (int i = 0; i < test.Count; i++)
+        {
+            Console.WriteLine(test[i].Amount);
+        }    
+    }
+
+    public bool CheckIsFirstTransaction(string accountNumber, string transactionType)
+    {
+        // Check if this is the first transaction for the account and it's a withdrawal
+        var transactionsount = context.Transactions
+                .Where(t => t.AccountNumber == accountNumber).AsEnumerable().ToList().Count;
+        if (transactionsount == 0 && transactionType == "W")
+        {
+            return true;
+        }
+        return false;
     }
 
 }
