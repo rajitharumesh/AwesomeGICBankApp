@@ -2,8 +2,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.Extensions.DependencyInjection;
-using System.Security.Principal;
-using System;
 
 public class Program
 {
@@ -494,7 +492,7 @@ public class Account
         for (int i = 0; i < test.Count; i++)
         {
             Console.WriteLine(test[i].Amount);
-        }    
+        }
     }
 
     public bool CheckIsFirstTransaction(string accountNumber, string transactionType)
