@@ -282,26 +282,49 @@ public class AwesomeGICBankApplication
         }
 
         // Calculate and apply interest for the month
-        var interestRate = GetInterestRateForDate(account.AccountNumber, startDate);
-        if (interestRate > 0)
+        var annualInterestRate = GetInterestRateForDate(account.AccountNumber, startDate);
+        if (annualInterestRate > 0)
         {
-            var daysInMonth = DateTime.DaysInMonth(year, month);
-            var interestAmount = (balance * (interestRate / 100)) * (daysInMonth / 365);
+            var numDays = DateTime.DaysInMonth(year, month);
+            // Calculate the daily interest rate
+            decimal dailyInterestRate = annualInterestRate / 365;
 
+            // Calculate the interest for the specified number of days
+            decimal interest = balance * dailyInterestRate * numDays;
             // Display the interest transaction
-            Console.WriteLine($"| {endDate:yyyyMMdd} |             | I    | {interestAmount:F2}  | {balance + interestAmount:F2}  |");
+            Console.WriteLine($"| {endDate:yyyyMMdd} |             | I    | {interest:F2}  | {balance + interest:F2}  |");
         }
     }
 
+    /*Interest rules:
+        | Date     | RuleId | Rate(%) |
+        | 20230101 | RULE01 |     1.95 |
+        | 20230520 | RULE02 |     1.90 |
+        | 20230615 | RULE03 |     2.20 |
+    */
+
     private decimal GetInterestRateForDate(string accountNumber, DateTime date)
     {
-        return dbContext.InterestRules
-            .Where(r => r.Date <= date && r.RuleId == "RULE03")
+        var applicableRules = dbContext.InterestRules
+            .Where(r => r.Date <= date) // 202305
             .OrderByDescending(r => r.Date)
-            .Select(r => r.Rate)
-            .FirstOrDefault();
-    }
+            .ToList();
 
+        decimal interestRate = 0;
+
+        foreach (var rule in applicableRules)
+        {
+            // Check if the next rule's start date is after the transaction date
+            var nextRule = applicableRules.FirstOrDefault(r => r.Date > rule.Date);
+            if (nextRule == null || (nextRule.Date > date))
+            {
+                interestRate = rule.Rate;
+                break; // Use the latest applicable rule
+            }
+        }
+
+        return interestRate;
+    }
 
     public void Quit()
     {
