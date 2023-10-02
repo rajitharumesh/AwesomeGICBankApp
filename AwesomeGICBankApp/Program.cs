@@ -2,6 +2,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.Extensions.DependencyInjection;
+using System;
 
 public class Program
 {
@@ -12,71 +13,71 @@ public class Program
             {
                 options.UseInMemoryDatabase("bankapp");
             })
+            .AddScoped<IUserInterface, ConsoleUserInterface>()
+            .AddScoped<ITransactionProcessor, TransactionProcessor>()
+            .AddScoped<IInterestRuleManager, InterestRuleManager>()
+            .AddScoped<IStatementPrinter, StatementPrinter>()
+            .AddScoped<IAccountService, AccountService>()
+            .AddScoped<IApplication, AwesomeGICBankApplication>()
+            .AddScoped<ITransactionRepository, TransactionRepository>()
+            .AddScoped<IAccountRepository, AccountRepository>()
             .AddScoped<AwesomeGICBankApplication>()
             .BuildServiceProvider();
 
         using (var scope = serviceProvider.CreateScope())
         {
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var app = new AwesomeGICBankApplication(dbContext);
+            var app = scope.ServiceProvider.GetRequiredService<IApplication>();
             app.Run();
         }
     }
 }
 
-public class AwesomeGICBankApplication
+public interface IApplication
 {
-    private readonly ApplicationDbContext dbContext;
+    void Run();
+}
+public interface IUserInterface
+{
+    string ReadInput();
+    void DisplayMessage(string message);
+}
 
-    public AwesomeGICBankApplication(ApplicationDbContext dbContext)
+public class ConsoleUserInterface : IUserInterface
+{
+    public string ReadInput()
     {
-        this.dbContext = dbContext;
+        return Console.ReadLine()?.Trim()?.ToUpper();
     }
-    public void Run()
+
+    public void DisplayMessage(string message)
     {
-        while (true)
-        {
-            Console.WriteLine("Welcome to AwesomeGIC Bank! What would you like to do?");
-            Console.WriteLine("[T] Input transactions");
-            Console.WriteLine("[I] Define interest rules");
-            Console.WriteLine("[P] Print statement");
-            Console.WriteLine("[Q] Quit");
-            Console.Write("> ");
+        Console.WriteLine(message);
+    }
+}
 
-            var input = Console.ReadLine()?.Trim()?.ToUpper();
-            Console.WriteLine(input);
+public interface ITransactionProcessor
+{
+    void InputTransactions();
+}
 
-            if (string.IsNullOrWhiteSpace(input))
-                continue;
+public class TransactionProcessor : ITransactionProcessor
+{
+    private readonly IUserInterface userInterface;
+    private readonly IAccountService accountService;
 
-            switch (input)
-            {
-                case "T":
-                    InputTransactions();
-                    break;
-                case "I":
-                    DefineInterestRules();
-                    break;
-                case "P":
-                    PrintStatement();
-                    break;
-                case "Q":
-                    Quit();
-                    return;
-                default:
-                    Console.WriteLine("Invalid input. Please try again.");
-                    break;
-            }
-        }
+    public TransactionProcessor(IUserInterface userInterface, IAccountService accountService)
+    {
+        this.userInterface = userInterface;
+        this.accountService = accountService;
     }
 
     public void InputTransactions()
     {
         while (true)
         {
-            Console.WriteLine("Please enter transaction details in <Date> <Account> <Type> <Amount> format");
-            Console.WriteLine("(or enter blank to go back to the main menu):");
-            Console.Write("> ");
+            userInterface.DisplayMessage("Please enter transaction details in <Date> <Account> <Type> <Amount> format");
+            userInterface.DisplayMessage("(or enter blank to go back to the main menu):");
+            userInterface.DisplayMessage("> ");
             var input = Console.ReadLine();
 
             if (string.IsNullOrWhiteSpace(input))
@@ -92,56 +93,142 @@ public class AwesomeGICBankApplication
 
                 if (!DateTime.TryParseExact(date, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out DateTime dateObj))
                 {
-                    Console.WriteLine("Invalid date format. Please use YYYYMMdd format.");
+                    userInterface.DisplayMessage("Invalid date format. Please use YYYYMMdd format.");
+                    continue; // Continue to the next iteration to allow the user to input again.
+                }
+
+                if (!decimal.TryParse(amountStr, out var amount) || amount <= 0)
+                {
+                    userInterface.DisplayMessage("Invalid amount. Please enter a positive number.");
+                    continue; // Continue to the next iteration to allow the user to input again.
+                }
+
+                // Use the accountService to create and interact with the account
+                var account = accountService.CreateAccountIfNotExist(accountNumber);
+
+                var isFirstTransactionWithdraw = accountService.IsFirstWithdrawal(account.AccountNumber, type);
+                if (isFirstTransactionWithdraw)
+                {
+                    userInterface.DisplayMessage("The first transaction on an account cannot be a withdrawal.");
+                    continue; // Continue to the next iteration to allow the user to input again.
+                }
+                if (type == "D")
+                {
+                    userInterface.DisplayMessage("D");
+                    accountService.Deposit(account, dateObj, amount);
+                }
+                else if (type == "W")
+                {
+                    userInterface.DisplayMessage("W");
+                    accountService.Withdraw(account, dateObj, amount);
+                }
+                else
+                {
+                    userInterface.DisplayMessage("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.");
+                    continue; // Continue to the next iteration to allow the user to input again.
+                }
+
+                userInterface.DisplayMessage("Transaction recorded successfully.");
+            }
+            else
+            {
+                userInterface.DisplayMessage("Invalid input format. Please use <Date> <Account> <Type> <Amount>.");
+            }
+        }
+    }
+
+    /*
+    public void InputTransactions()
+    {
+        while (true)
+        {
+            userInterface.DisplayMessage("Please enter transaction details in <Date> <Account> <Type> <Amount> format");
+            userInterface.DisplayMessage("(or enter blank to go back to the main menu):");
+            userInterface.DisplayMessage("> ");
+            var input = Console.ReadLine();
+
+            if (string.IsNullOrWhiteSpace(input))
+                return;
+
+            var parts = input.Split(' ');
+            if (parts.Length == 4)
+            {
+                var date = parts[0];
+                var accountNumber = parts[1];
+                var type = parts[2].ToUpper();
+                var amountStr = parts[3];
+
+                if (!DateTime.TryParseExact(date, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out DateTime dateObj))
+                {
+                    userInterface.DisplayMessage("Invalid date format. Please use YYYYMMdd format.");
                     return;
                 }
 
                 if (!decimal.TryParse(amountStr, out var amount) || amount <= 0)
                 {
-                    Console.WriteLine("Invalid amount. Please enter a positive number.");
+                    userInterface.DisplayMessage("Invalid amount. Please enter a positive number.");
                     return;
                 }
 
-                var account = new Account(accountNumber, dbContext);
-                account.CreateAccountIfNotExist(accountNumber);
+                // Use the accountService to create and interact with the account
+                var account = accountService.CreateAccountIfNotExist(accountNumber);
 
-                var isFirstTransactionWithdraw = account.CheckIsFirstTransaction(accountNumber, type);
+                var isFirstTransactionWithdraw = accountService.IsFirstWithdrawal(account.AccountNumber, type);
                 if (isFirstTransactionWithdraw)
                 {
-                    Console.WriteLine("The first transaction on an account cannot be a withdrawal.");
+                    userInterface.DisplayMessage("The first transaction on an account cannot be a withdrawal.");
                     return;
                 }
                 if (type == "D")
                 {
-                    Console.WriteLine("D");
-                    account.Deposit(dateObj, amount);
+                    userInterface.DisplayMessage("D");
+                    accountService.Deposit(account, dateObj, amount);
                 }
                 else if (type == "W")
                 {
-                    Console.WriteLine("W");
-                    account.Withdraw(dateObj, amount);
+                    userInterface.DisplayMessage("W");
+                    accountService.Withdraw(account, dateObj, amount);
                 }
                 else
                 {
-                    Console.WriteLine("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.");
+                    userInterface.DisplayMessage("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.");
                     return;
                 }
 
-                Console.WriteLine("Transaction recorded successfully.");
+                userInterface.DisplayMessage("Transaction recorded successfully.");
 
             }
             else
             {
-                Console.WriteLine("Invalid input format. Please use <Date> <Account> <Type> <Amount>.");
+                userInterface.DisplayMessage("Invalid input format. Please use <Date> <Account> <Type> <Amount>.");
             }
         }
+
+    }
+*/
+}
+
+public interface IInterestRuleManager
+{
+    void DefineInterestRules();
+}
+
+public class InterestRuleManager : IInterestRuleManager
+{
+    private readonly IUserInterface userInterface;
+    private readonly ApplicationDbContext dbContext;
+
+    public InterestRuleManager(ApplicationDbContext dbContext, IUserInterface userInterface)
+    {
+        this.dbContext = dbContext;
+        this.userInterface = userInterface;
     }
 
     public void DefineInterestRules()
     {
-        Console.WriteLine("Please enter interest rule details in <Date> <RuleId> <Rate in %>");
-        Console.WriteLine("(or enter blank to go back to the main menu):");
-        Console.Write("> ");
+        userInterface.DisplayMessage("Please enter interest rule details in <Date> <RuleId> <Rate in %>");
+        userInterface.DisplayMessage("(or enter blank to go back to the main menu):");
+        userInterface.DisplayMessage("> ");
 
         var input = Console.ReadLine()?.Trim();
         if (string.IsNullOrWhiteSpace(input))
@@ -150,26 +237,26 @@ public class AwesomeGICBankApplication
         var ruleDetails = input.Split(' ');
         if (ruleDetails.Length != 3)
         {
-            Console.WriteLine("Invalid input format. Please enter details in the correct format.");
+            userInterface.DisplayMessage("Invalid input format. Please enter details in the correct format.");
             return;
         }
 
         if (!DateTime.TryParseExact(ruleDetails[0], "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out var date))
         {
-            Console.WriteLine("Invalid date format. Please use YYYYMMdd format.");
+            userInterface.DisplayMessage("Invalid date format. Please use YYYYMMdd format.");
             return;
         }
 
         var ruleId = ruleDetails[1];
         if (string.IsNullOrWhiteSpace(ruleId))
         {
-            Console.WriteLine("RuleId cannot be empty.");
+            userInterface.DisplayMessage("RuleId cannot be empty.");
             return;
         }
 
         if (!decimal.TryParse(ruleDetails[2], out var rate) || rate <= 0 || rate >= 100)
         {
-            Console.WriteLine("Invalid interest rate. Rate should be greater than 0 and less than 100.");
+            userInterface.DisplayMessage("Invalid interest rate. Rate should be greater than 0 and less than 100.");
             return;
         }
 
@@ -181,7 +268,7 @@ public class AwesomeGICBankApplication
 
         if (existingRuleOnDate != null)
         {
-            Console.WriteLine("An interest rule already exists for this date. The latest rule will be kept.");
+            userInterface.DisplayMessage("An interest rule already exists for this date. The latest rule will be kept.");
             existingRuleOnDate.RuleId = ruleId;
             existingRuleOnDate.Rate = rate;
         }
@@ -203,19 +290,37 @@ public class AwesomeGICBankApplication
         // Display all interest rules ordered by date
         var interestRules = dbContext.InterestRules.OrderBy(r => r.Date).ToList();
 
-        Console.WriteLine("Interest rules:");
-        Console.WriteLine("| Date     | RuleId | Rate (%) |");
+        userInterface.DisplayMessage("Interest rules:");
+        userInterface.DisplayMessage("| Date     | RuleId | Rate (%) |");
         foreach (var rule in interestRules)
         {
-            Console.WriteLine($"| {rule.Date:yyyyMMdd} | {rule.RuleId} | {rule.Rate:F2} |");
+            userInterface.DisplayMessage($"| {rule.Date:yyyyMMdd} | {rule.RuleId} | {rule.Rate:F2} |");
         }
+    }
+}
+
+// Statement printing
+public interface IStatementPrinter
+{
+    void PrintStatement();
+}
+
+public class StatementPrinter : IStatementPrinter
+{
+    private readonly ApplicationDbContext dbContext;
+    private readonly IUserInterface userInterface;
+
+    public StatementPrinter(ApplicationDbContext dbContext, IUserInterface userInterface)
+    {
+        this.dbContext = dbContext;
+        this.userInterface = userInterface;
     }
 
     public void PrintStatement()
     {
-        Console.WriteLine("Please enter account and month to generate the statement <Account> <Year><Month>");
-        Console.WriteLine("(or enter blank to go back to main menu):");
-        Console.Write("> ");
+        userInterface.DisplayMessage("Please enter account and month to generate the statement <Account> <Year><Month>");
+        userInterface.DisplayMessage("(or enter blank to go back to main menu):");
+        userInterface.DisplayMessage("> ");
 
         var input = Console.ReadLine()?.Trim();
         if (string.IsNullOrWhiteSpace(input))
@@ -224,7 +329,7 @@ public class AwesomeGICBankApplication
         var statementDetails = input.Split(' ');
         if (statementDetails.Length != 2)
         {
-            Console.WriteLine("Invalid input format. Please enter account and month in the correct format.");
+            userInterface.DisplayMessage("Invalid input format. Please enter account and month in the correct format.");
             return;
         }
 
@@ -234,28 +339,29 @@ public class AwesomeGICBankApplication
         if (!int.TryParse(yearMonth.Substring(0, 4), out var year) ||
             !int.TryParse(yearMonth.Substring(4, 2), out var month))
         {
-            Console.WriteLine("Invalid year and month format. Please use YYYYMM format.");
+            userInterface.DisplayMessage("Invalid year and month format. Please use YYYYMM format.");
             return;
         }
 
-        // Retrieve the account or create it if it doesn't exist
-        var account = new Account(accountNumber, dbContext);
-        account.CreateAccountIfNotExist(accountNumber);
+        /*Retrieve the account or create it if it doesn't exist
+       var account = new Account(accountNumber, dbContext);
+       account.CreateAccountIfNotExist(accountNumber);
 
-        if (account == null)
-        {
-            Console.WriteLine("Account not found or creation failed.");
-            return;
-        }
+       if (account == null)
+       {
+           userInterface.DisplayMessage("Account not found or creation failed.");
+           return;
+       }*/
 
         // Calculate and print the account statement
-        PrintAccountStatement(account, year, month);
+        PrintAccountStatement(new Account(accountNumber), year, month);
+        userInterface.DisplayMessage("Transaction recorded successfully.");
     }
 
     private void PrintAccountStatement(Account account, int year, int month)
     {
-        Console.WriteLine($"Account: {account.AccountNumber}");
-        Console.WriteLine("| Date     | Txn Id      | Type | Amount | Balance |");
+        userInterface.DisplayMessage($"Account: {account.AccountNumber}");
+        userInterface.DisplayMessage("| Date     | Txn Id      | Type | Amount | Balance |");
 
         var startDate = new DateTime(year, month, 1);
         var endDate = startDate.AddMonths(1).AddDays(-1);
@@ -278,7 +384,7 @@ public class AwesomeGICBankApplication
                 balance -= transaction.Amount;
             }
 
-            Console.WriteLine($"| {transaction.Date:yyyyMMdd} | {transaction.TransactionId} | {transaction.Type}    | {transaction.Amount:F2}  | {balance:F2}  |");
+            userInterface.DisplayMessage($"| {transaction.Date:yyyyMMdd} | {transaction.TransactionId} | {transaction.Type}    | {transaction.Amount:F2}  | {balance:F2}  |");
         }
 
         // Calculate and apply interest for the month
@@ -292,7 +398,7 @@ public class AwesomeGICBankApplication
             // Calculate the interest for the specified number of days
             decimal interest = balance * dailyInterestRate * numDays;
             // Display the interest transaction
-            Console.WriteLine($"| {endDate:yyyyMMdd} |             | I    | {interest:F2}  | {balance + interest:F2}  |");
+            userInterface.DisplayMessage($"| {endDate:yyyyMMdd} |             | I    | {interest:F2}  | {balance + interest:F2}  |");
         }
     }
 
@@ -302,7 +408,6 @@ public class AwesomeGICBankApplication
         | 20230520 | RULE02 |     1.90 |
         | 20230615 | RULE03 |     2.20 |
     */
-
     private decimal GetInterestRateForDate(string accountNumber, DateTime date)
     {
         var applicableRules = dbContext.InterestRules
@@ -326,10 +431,67 @@ public class AwesomeGICBankApplication
         return interestRate;
     }
 
+}
+
+public class AwesomeGICBankApplication : IApplication
+{
+    private readonly ApplicationDbContext dbContext;
+    private readonly IUserInterface userInterface;
+    private readonly ITransactionProcessor transactionProcessor;
+    private readonly IInterestRuleManager interestRuleManager;
+    private readonly IStatementPrinter iStatementPrinter;
+
+    public AwesomeGICBankApplication(ApplicationDbContext dbContext, IUserInterface userInterface,
+        ITransactionProcessor transactionProcessor, IInterestRuleManager interestRuleManager, IStatementPrinter iStatementPrinter)
+    {
+        this.dbContext = dbContext;
+        this.userInterface = userInterface;
+        this.transactionProcessor = transactionProcessor;
+        this.interestRuleManager = interestRuleManager;
+        this.iStatementPrinter = iStatementPrinter;
+    }
+
+    public void Run()
+    {
+        while (true)
+        {
+            userInterface.DisplayMessage("Welcome to AwesomeGIC Bank! What would you like to do?");
+            userInterface.DisplayMessage("[T] Input transactions");
+            userInterface.DisplayMessage("[I] Define interest rules");
+            userInterface.DisplayMessage("[P] Print statement");
+            userInterface.DisplayMessage("[Q] Quit");
+            userInterface.DisplayMessage("> ");
+
+            var input = userInterface.ReadInput();
+
+            if (string.IsNullOrWhiteSpace(input))
+                continue;
+
+            switch (input)
+            {
+                case "T":
+                    this.transactionProcessor.InputTransactions();
+                    break;
+                case "I":
+                    this.interestRuleManager.DefineInterestRules();
+                    break;
+                case "P":
+                    iStatementPrinter.PrintStatement();
+                    break;
+                case "Q":
+                    Quit();
+                    return;
+                default:
+                    userInterface.DisplayMessage("Invalid input. Please try again.");
+                    break;
+            }
+        }
+    }
+
     public void Quit()
     {
-        Console.WriteLine("Thank you for banking with AwesomeGIC Bank.");
-        Console.WriteLine("Have a nice day!");
+        userInterface.DisplayMessage("Thank you for banking with AwesomeGIC Bank.");
+        userInterface.DisplayMessage("Have a nice day!");
     }
 }
 
@@ -387,57 +549,56 @@ public class Account
 {
     public int AccountId { get; set; }
     public string AccountNumber { get; set; }
-    private readonly ApplicationDbContext context;
 
-    public Account(string accountNumber, ApplicationDbContext dbContext)
+    public Account(string accountNumber)
     {
         AccountNumber = accountNumber;
+    }
+}
+
+public interface ITransactionRepository
+{
+    void AddTransaction(Transaction transaction);
+    decimal CalculateBalance(string accountNumber);
+    bool IsFirstWithdrawal(string accountNumber, string transactionType);
+    string GenerateTransactionId(string accountNumber, DateTime date);
+}
+
+public class TransactionRepository : ITransactionRepository
+{
+    private readonly ApplicationDbContext context;
+
+    public TransactionRepository(ApplicationDbContext dbContext)
+    {
         context = dbContext;
     }
 
-    public Account CreateAccountIfNotExist(string accountNumber)
+    public void AddTransaction(Transaction transaction)
     {
-        var existingAccount = context.Accounts.AsEnumerable().FirstOrDefault(a => a.AccountNumber == accountNumber);
-
-        if (existingAccount == null)
-        {
-            existingAccount = new Account(accountNumber, context);
-            context.Accounts.Add(existingAccount);
-            context.SaveChanges();
-        }
-
-        return existingAccount;
+        context.Transactions.Add(transaction);
+        context.SaveChanges();
     }
 
-    public void Deposit(DateTime date, decimal amount)
+    public decimal CalculateBalance(string accountNumber)
     {
-        if (amount <= 0)
-        {
-            Console.WriteLine("Invalid deposit amount.");
-            return;
-        }
+        var deposits = context.Transactions
+            .Where(t => t.AccountNumber == accountNumber && t.Type == "D")
+            .Sum(t => t.Amount);
 
-        try
-        {
-            var transactionId = GenerateTransactionId(AccountNumber, date);
+        var withdrawals = context.Transactions
+            .Where(t => t.AccountNumber == accountNumber && t.Type == "W")
+            .Sum(t => t.Amount);
 
-            var transactionObj = new Transaction
-            {
-                TransactionId = transactionId,
-                Date = date,
-                AccountNumber = AccountNumber,
-                Type = "D",
-                Amount = amount
-            };
+        return deposits - withdrawals;
+    }
 
-            context.Transactions.Add(transactionObj);
-            context.SaveChanges();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex.Message);
-            Console.WriteLine(ex.InnerException?.Message);
-        }
+    public bool IsFirstWithdrawal(string accountNumber, string transactionType)
+    {
+        var transactionCount = context.Transactions
+            .Where(t => t.AccountNumber == accountNumber)
+            .Count();
+
+        return transactionCount == 0 && transactionType == "W";
     }
 
     public string GenerateTransactionId(string accountNumber, DateTime date)
@@ -467,20 +628,108 @@ public class Account
         return transactionId;
     }
 
-    public decimal CalculateBalance()
+}
+
+public interface IAccountRepository
+{
+    Account AddAccount(string accountNumber);
+    Account RetriveAccount(string accountNumber);
+}
+
+public class AccountRepository : IAccountRepository
+{
+    private readonly ApplicationDbContext context;
+
+    public AccountRepository(ApplicationDbContext dbContext)
     {
-        var deposits = context.Transactions
-            .Where(t => t.AccountNumber == AccountNumber && t.Type == "D")
-            .Sum(t => t.Amount);
-
-        var withdrawals = context.Transactions
-            .Where(t => t.AccountNumber == AccountNumber && t.Type == "W")
-            .Sum(t => t.Amount);
-
-        return deposits - withdrawals;
+        context = dbContext;
     }
 
-    public void Withdraw(DateTime date, decimal amount)
+    public Account AddAccount(string accountNumber)
+    {
+        var account = new Account(accountNumber);
+        context.Accounts.Add(account);
+        context.SaveChanges();
+        return account;
+    }
+
+    public Account? RetriveAccount(string accountNumber)
+    {
+        var account = context.Accounts
+            .Where(t => t.AccountNumber == accountNumber).AsEnumerable().FirstOrDefault();
+        if (account != null && account.AccountId > 0)
+        {
+            return account as Account;
+        }
+        else
+        {
+            return null;
+        }
+    }
+}
+
+public interface IAccountService
+{
+    Account CreateAccountIfNotExist(string accountNumber);
+    void Deposit(Account account, DateTime date, decimal amount);
+    void Withdraw(Account account, DateTime date, decimal amount);
+    bool IsFirstWithdrawal(string accountNumber, string transactionType);
+}
+
+
+public class AccountService : IAccountService
+{
+    private readonly ITransactionRepository transactionRepository;
+    private readonly IAccountRepository accountRepository;
+
+    public AccountService(ITransactionRepository transactionRepository, IAccountRepository accountRepository)
+    {
+        this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
+    }
+
+    public Account CreateAccountIfNotExist(string accountNumber)
+    {
+        // Check and create the account logic here
+        var account = this.accountRepository.RetriveAccount(accountNumber);
+
+        if (account == null || account.AccountId > 0)
+        {
+            account = this.accountRepository.AddAccount(accountNumber);
+        }
+        return account;
+    }
+
+    public void Deposit(Account account, DateTime date, decimal amount)
+    {
+        if (amount <= 0)
+        {
+            Console.WriteLine("Invalid deposit amount.");
+            return;
+        }
+
+        try
+        {
+            var transactionId = this.transactionRepository.GenerateTransactionId(account.AccountNumber, date);
+
+            var transactionObj = new Transaction
+            {
+                TransactionId = transactionId,
+                Date = date,
+                AccountNumber = account.AccountNumber,
+                Type = "D",
+                Amount = amount
+            };
+            this.transactionRepository.AddTransaction(transactionObj);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+            Console.WriteLine(ex.InnerException?.Message);
+        }
+    }
+
+    public void Withdraw(Account account, DateTime date, decimal amount)
     {
         if (amount <= 0)
         {
@@ -488,47 +737,29 @@ public class Account
             return;
         }
 
-        var balance = CalculateBalance();
+        var balance = this.transactionRepository.CalculateBalance(account.AccountNumber);
         if (balance < amount)
         {
             Console.WriteLine("Insufficient balance.");
             return;
         }
 
-        var transactionId = GenerateTransactionId(AccountNumber, date);
+        var transactionId = this.transactionRepository.GenerateTransactionId(account.AccountNumber, date);
         var transaction = new Transaction
         {
             TransactionId = transactionId,
             Date = date,
-            AccountNumber = AccountNumber,
+            AccountNumber = account.AccountNumber,
             Type = "W",
             Amount = amount
         };
+        this.transactionRepository.AddTransaction(transaction);
 
-        context.Transactions.Add(transaction);
-        context.SaveChanges();
-
-
-        Console.WriteLine("result : ");
-
-        var test = context.Transactions.AsEnumerable().ToList();
-        for (int i = 0; i < test.Count; i++)
-        {
-            Console.WriteLine(test[i].Amount);
-        }
     }
 
-    public bool CheckIsFirstTransaction(string accountNumber, string transactionType)
+    public bool IsFirstWithdrawal(string accountNumber, string transactionType)
     {
-        // Check if this is the first transaction for the account and it's a withdrawal
-        var transactionsount = context.Transactions
-                .Where(t => t.AccountNumber == accountNumber).AsEnumerable().ToList().Count;
-        if (transactionsount == 0 && transactionType == "W")
-        {
-            return true;
-        }
-        return false;
+        var transactionCount = transactionRepository.IsFirstWithdrawal(accountNumber, transactionType);
+        return transactionCount;
     }
-
-
 }

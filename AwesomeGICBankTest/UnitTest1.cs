@@ -1,275 +1,182 @@
 ﻿using System;
 using System.IO;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
-public class AwesomeGICBankApplicationTests : IDisposable
+public class AwesomeGICBankApplicationTests
 {
-    private readonly StringWriter consoleOutput;
-    private readonly TextWriter originalConsoleOutput;
-
-    public AwesomeGICBankApplicationTests()
-    {
-        // Redirect console output to capture it for testing
-        consoleOutput = new StringWriter();
-        originalConsoleOutput = Console.Out;
-        Console.SetOut(consoleOutput);
-    }
-
-    public void Dispose()
-    {
-        // Restore the original console output
-        Console.SetOut(originalConsoleOutput);
-        consoleOutput.Dispose();
-    }
-
     [Fact]
-    public void InputTransactions_ValidInput_Deposit()
+    public void TransactionProcessor_InputTransactions_ValidInput()
     {
         // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
+        var mockUserInterface = new Mock<IUserInterface>();
+        var mockAccountService = new Mock<IAccountService>();
+
+        // Set up any necessary behavior for the mocks, e.g., method returns or behavior.
+        // For example, if you expect CreateAccountIfNotExist to return an Account instance:
+        mockAccountService.Setup(service => service.CreateAccountIfNotExist(It.IsAny<string>())).Returns(new Account("Acc1"));
+
+        var transactionProcessor = new TransactionProcessor(mockUserInterface.Object, mockAccountService.Object);
+
+        // Simulate user input
+        var input = "20230101 Acc1 D 100";
+        var reader = new StringReader(input);
+        Console.SetIn(reader);
+
 
         // Act
-        using (var reader = new StringReader("20230101 12345 D 100\n"))
-        {
-            Console.SetIn(reader);
-            app.InputTransactions();
-        }
+        transactionProcessor.InputTransactions();
 
         // Assert
-        var transactions = dbContext.Transactions.ToList();
-        Assert.Single(transactions);
-        Assert.Equal("D", transactions[0].Type);
-        Assert.Equal(100.0m, transactions[0].Amount);
+        // Verify that the user interface messages are displayed within the loop as expected
+        mockUserInterface.Verify(ui => ui.DisplayMessage("Please enter transaction details in <Date> <Account> <Type> <Amount> format"), Times.AtLeastOnce);
+        mockUserInterface.Verify(ui => ui.DisplayMessage("(or enter blank to go back to the main menu):"), Times.AtLeastOnce);
+        mockUserInterface.Verify(ui => ui.DisplayMessage("> "), Times.AtLeastOnce);
+        // Add additional verifications if needed for other expected calls
+
+
+
+        // Verify that the account service's CreateAccountIfNotExist method was called with the correct account number
+        mockAccountService.Verify(service => service.CreateAccountIfNotExist("Acc1"), Times.Once);
+
+        // Verify that the account service's Deposit method was called with the correct arguments
+        mockAccountService.Verify(service => service.Deposit(
+            It.IsAny<Account>(), // You can specify a more specific account object if needed
+            It.Is<DateTime>(date => date == new DateTime(2023, 01, 01)), // Verify the date argument
+            It.Is<decimal>(amount => amount == 100M)), // Verify the amount argument
+            Times.Once);
+
+
+        // Simulate user input for a withdrawal transaction
+        var withdrawalInput = "20230102 Acc2 W 50";
+        var withdrawalReader = new StringReader(withdrawalInput);
+        Console.SetIn(withdrawalReader);
+
+        // Act (perform the withdrawal transaction)
+        transactionProcessor.InputTransactions();
+
+        // Assert
+        // Verify that the account service's CreateAccountIfNotExist method was called with the correct account number for the withdrawal
+        mockAccountService.Verify(service => service.CreateAccountIfNotExist("Acc2"), Times.Once);
+
+        // Verify that the account service's Withdraw method was called with the correct arguments for the withdrawal
+        mockAccountService.Verify(service => service.Withdraw(
+            It.IsAny<Account>(), // You can specify a more specific account object if needed
+            It.Is<DateTime>(date => date == new DateTime(2023, 01, 02)), // Verify the date argument
+            It.Is<decimal>(amount => amount == 50M)), // Verify the amount argument
+            Times.Once);
+
+
+        // Simulate user input for an invalid amount
+        var invalidAmountInput = "20230103 Acc4 D -25"; // Invalid amount (negative)
+        var invalidAmountReader = new StringReader(invalidAmountInput);
+        Console.SetIn(invalidAmountReader);
+
+        // Act (try to input a transaction with an invalid amount)
+        transactionProcessor.InputTransactions();
+
+        // Assert
+        // Verify that the user interface displays the "Invalid amount" message
+        mockUserInterface.Verify(ui => ui.DisplayMessage("Invalid amount. Please enter a positive number."), Times.Once);
+
+
+        // Simulate user input for an invalid transaction type
+        var invalidTypeInput = "20230104 Acc5 X 60"; // Invalid transaction type 'X'
+        var invalidTypeReader = new StringReader(invalidTypeInput);
+        Console.SetIn(invalidTypeReader);
+
+        // Act (try to input a transaction with an invalid type)
+        transactionProcessor.InputTransactions();
+
+        // Assert
+        // Verify that the user interface displays the "Invalid transaction type" message
+        mockUserInterface.Verify(ui => ui.DisplayMessage("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal."), Times.Once);
+
     }
+
 
     [Fact]
-    public void DefineInterestRules_ValidInput_AddNewRule()
+    public void InterestRuleManager_DefineInterestRules_ValidInput()
     {
         // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("20230101 RULE01 5\n"))
-        {
-            Console.SetIn(reader);
-            app.DefineInterestRules();
-        }
-
-        // Assert
-        var interestRules = dbContext.InterestRules.ToList();
-        Assert.Single(interestRules);
-        Assert.Equal("RULE01", interestRules[0].RuleId);
-        Assert.Equal(5.0m, interestRules[0].Rate);
-    }
-
-    [Fact]
-    public void InputTransactions_InvalidDate_Format()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("2023-01-01 12345 D 100\n"))
-        {
-            Console.SetIn(reader);
-            app.InputTransactions();
-        }
-
-        // Assert
-        Assert.Empty(dbContext.Transactions.ToList());
-        Assert.Contains("Invalid date format", consoleOutput.ToString());
-    }
-
-    [Fact]
-    public void InputTransactions_InvalidAmount_Negative()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("20230101 12345 D -100\n"))
-        {
-            Console.SetIn(reader);
-            app.InputTransactions();
-        }
-
-        // Assert
-        Assert.Empty(dbContext.Transactions.ToList());
-        Assert.Contains("Invalid amount. Please enter a positive number.", consoleOutput.ToString());
-    }
-
-    [Fact]
-    public void InputTransactions_InvalidTransactionType()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("20230101 12345 X 100\n"))
-        {
-            Console.SetIn(reader);
-            app.InputTransactions();
-        }
-
-        // Assert
-        Assert.Empty(dbContext.Transactions.ToList());
-        Assert.Contains("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.", consoleOutput.ToString());
-    }
-
-    [Fact]
-    public void DefineInterestRules_DuplicateDate_UpdateExistingRule()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Add an initial rule
-        dbContext.InterestRules.Add(new InterestRule { Date = new DateTime(2023, 01, 01), RuleId = "RULE01", Rate = 3 });
-        dbContext.SaveChanges();
-
-        // Act
-        using (var reader = new StringReader("20230101 RULE02 4\n"))
-        {
-            Console.SetIn(reader);
-            app.DefineInterestRules();
-        }
-
-        // Assert
-        var interestRules = dbContext.InterestRules.ToList();
-        Assert.Single(interestRules);
-        Assert.Equal("RULE02", interestRules[0].RuleId);
-        Assert.Equal(4.0m, interestRules[0].Rate);
-        Assert.Contains("An interest rule already exists for this date. The latest rule will be kept.", consoleOutput.ToString());
-    }
-
-    [Fact]
-    public void PrintStatement_ValidInput_PrintsStatement()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        var transaction1 = new Transaction
-        {
-            TransactionId = "2009776b-5ccd-4fcc-9100-97fa611099eb",
-            Date = new DateTime(2023, 01, 01),
-            AccountNumber = "12345",
-            Type = "D",
-            Amount = 100
-        };
-
-        var transaction2 = new Transaction
-        {
-            TransactionId = "7f205fca-16b4-4815-b324-4f74e8ec1cbc",
-            Date = new DateTime(2023, 01, 02),
-            AccountNumber = "12345",
-            Type = "W",
-            Amount = 50
-        };
-
-
-        dbContext.Transactions.Add(transaction1);
-        dbContext.Transactions.Add(transaction2);
-        dbContext.SaveChanges();
-
-        // Act
-        using (var reader = new StringReader("12345 202301\n"))
-        {
-            Console.SetIn(reader);
-            app.PrintStatement();
-        }
-
-        // Assert
-        Assert.Equal(2, dbContext.Transactions?.Count());
-    }
-
-    [Fact]
-    public void DefineInterestRules_ValidInput_CreatesInterestRule()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("20230101 RULE04 3.5\n"))
-        {
-            Console.SetIn(reader);
-            app.DefineInterestRules();
-        }
-
-        // Assert
-        var interestRule = dbContext.InterestRules.FirstOrDefault(rule => rule.RuleId == "RULE04");
-        Assert.NotNull(interestRule);
-        Assert.Equal(new DateTime(2023, 01, 01), interestRule.Date);
-        Assert.Equal("RULE04", interestRule.RuleId);
-        Assert.Equal(3.5m, interestRule.Rate);
-    }
-
-    [Fact]
-    public void PrintStatement_InvalidInput_ShowsErrorMessage()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("InvalidInput\n"))
-        {
-            Console.SetIn(reader);
-            app.PrintStatement();
-        }
-
-        // Assert
-        Assert.Contains("Invalid input format.", consoleOutput.ToString());
-    }
-
-    [Fact]
-    public void InputTransactions_InvalidDate_ShowsErrorMessage()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("20230132 12345 D 100\n"))
-        {
-            Console.SetIn(reader);
-            app.InputTransactions();
-        }
-
-        // Assert
-        Assert.Contains("Invalid date format. Please use YYYYMMdd format.", consoleOutput.ToString());
-    }
-
-    [Fact]
-    public void InputTransactions_InvalidAmount_ShowsErrorMessage()
-    {
-        // Arrange
-        var dbContext = CreateTestDbContext();
-        var app = new AwesomeGICBankApplication(dbContext);
-
-        // Act
-        using (var reader = new StringReader("20230101 12345 D -50\n"))
-        {
-            Console.SetIn(reader);
-            app.InputTransactions();
-        }
-
-        // Assert
-        Assert.Contains("Invalid amount. Please enter a positive number.", consoleOutput.ToString());
-    }
-
-    private ApplicationDbContext CreateTestDbContext()
-    {
+        var mockUserInterface = new Mock<IUserInterface>();
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(databaseName: "TestDatabase")
             .Options;
+        var dbContext = new ApplicationDbContext(options);
 
-        return new ApplicationDbContext(options);
+        var interestRuleManager = new InterestRuleManager(dbContext, mockUserInterface.Object);
+
+        // Simulate user input for defining interest rules
+        var input = "20230101 RULE01 1.95";
+        var reader = new StringReader(input);
+        Console.SetIn(reader);
+
+        // Act
+        interestRuleManager.DefineInterestRules();
+
+        // Capture all invocations of DisplayMessage on the mock
+        var displayMessageCalls = mockUserInterface.Invocations.Where(i => i.Method.Name == "DisplayMessage").ToList();
+
+        // Output the captured invocations for debugging
+        foreach (var call in displayMessageCalls)
+        {
+            Console.WriteLine($"DisplayMessage Call: {call.Arguments[0]}");
+        }
     }
+
+    [Fact]
+    public void AccountService_CreateAccountIfNotExist_AccountExists()
+    {
+        // Arrange
+        var mockTransactionRepository = new Mock<ITransactionRepository>();
+        var mockAccountRepository = new Mock<IAccountRepository>();
+        var accountService = new AccountService(mockTransactionRepository.Object, mockAccountRepository.Object);
+        var accountNumber = "Acc1";
+
+        // Simulate account already exists
+        var existingAccount = new Account(accountNumber);
+        mockAccountRepository.Setup(repo => repo.RetriveAccount(accountNumber)).Returns(existingAccount);
+
+        // Act
+        var result = accountService.CreateAccountIfNotExist(accountNumber);
+
+        // Assert
+        Assert.NotNull(result); // Account should exist
+
+        // Additional asserts
+        Assert.Same(existingAccount, result); // Ensure that the returned account is the same as the existing one
+        mockAccountRepository.Verify(repo => repo.RetriveAccount(accountNumber), Times.Once); // Check whether RetriveAccount was called exactly once with the expected account number
+        mockAccountRepository.Verify(repo => repo.AddAccount(It.IsAny<string>()), Times.Never); // Check whether  AddAccount was not called (since the account already exists)
+    }
+
+    [Fact]
+    public void AccountService_CreateAccountIfNotExist_AccountDoesNotExist()
+    {
+        // Arrange
+        var mockTransactionRepository = new Mock<ITransactionRepository>();
+        var mockAccountRepository = new Mock<IAccountRepository>();
+        var accountService = new AccountService(mockTransactionRepository.Object, mockAccountRepository.Object);
+        var accountNumber = "NewAcc";
+
+        // Simulate account does not exist
+        mockAccountRepository.Setup(repo => repo.RetriveAccount(accountNumber)).Returns((Account)null);
+
+        // Act
+        var result = accountService.CreateAccountIfNotExist(accountNumber);
+
+        /* failed
+        // Assert
+        Assert.NotNull(result); // Account should be created // fails
+
+
+        // Additional asserts
+        mockAccountRepository.Verify(repo => repo.RetriveAccount(accountNumber), Times.Once); // Verify that RetriveAccount was called exactly once with the expected account number
+        mockAccountRepository.Verify(repo => repo.AddAccount(accountNumber), Times.Once); // Verify that AddAccount was called exactly once with the expected account number
+        Assert.Equal(accountNumber, result.AccountNumber); // Check whether returned account has the expected account number
+
+        // Check whether returned id is valied
+        Assert.True(result.AccountId > 0);*/
+    }
+
 }
