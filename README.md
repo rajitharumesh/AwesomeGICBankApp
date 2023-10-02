@@ -1,5 +1,20 @@
 # AwesomeGICBankApp
 Simple banking system that handles operations on bank accounts.
 
-dotnet ef migrations add
-dotnet ef database update
+## Description
+
+
+
+## Getting Started
+
+### Dependencies
+
+* .Netcore 7.0
+* In Memory Database
+* Xunit
+
+### Executing program
+
+* Run Project :> dotnet run
+
+* Run Test Cases :> dotnet test
