@@ -35,7 +35,6 @@ public class AwesomeGICBankApplicationTests
         // Add additional verifications if needed for other expected calls
 
 
-
         // Verify that the account service's CreateAccountIfNotExist method was called with the correct account number
         mockAccountService.Verify(service => service.CreateAccountIfNotExist("Acc1"), Times.Once);
 
@@ -91,7 +90,6 @@ public class AwesomeGICBankApplicationTests
         // Assert
         // Verify that the user interface displays the "Invalid transaction type" message
         mockUserInterface.Verify(ui => ui.DisplayMessage("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal."), Times.Once);
-
     }
 
 

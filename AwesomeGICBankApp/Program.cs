@@ -137,75 +137,6 @@ public class TransactionProcessor : ITransactionProcessor
         }
     }
 
-    /*
-    public void InputTransactions()
-    {
-        while (true)
-        {
-            userInterface.DisplayMessage("Please enter transaction details in <Date> <Account> <Type> <Amount> format");
-            userInterface.DisplayMessage("(or enter blank to go back to the main menu):");
-            userInterface.DisplayMessage("> ");
-            var input = Console.ReadLine();
-
-            if (string.IsNullOrWhiteSpace(input))
-                return;
-
-            var parts = input.Split(' ');
-            if (parts.Length == 4)
-            {
-                var date = parts[0];
-                var accountNumber = parts[1];
-                var type = parts[2].ToUpper();
-                var amountStr = parts[3];
-
-                if (!DateTime.TryParseExact(date, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out DateTime dateObj))
-                {
-                    userInterface.DisplayMessage("Invalid date format. Please use YYYYMMdd format.");
-                    return;
-                }
-
-                if (!decimal.TryParse(amountStr, out var amount) || amount <= 0)
-                {
-                    userInterface.DisplayMessage("Invalid amount. Please enter a positive number.");
-                    return;
-                }
-
-                // Use the accountService to create and interact with the account
-                var account = accountService.CreateAccountIfNotExist(accountNumber);
-
-                var isFirstTransactionWithdraw = accountService.IsFirstWithdrawal(account.AccountNumber, type);
-                if (isFirstTransactionWithdraw)
-                {
-                    userInterface.DisplayMessage("The first transaction on an account cannot be a withdrawal.");
-                    return;
-                }
-                if (type == "D")
-                {
-                    userInterface.DisplayMessage("D");
-                    accountService.Deposit(account, dateObj, amount);
-                }
-                else if (type == "W")
-                {
-                    userInterface.DisplayMessage("W");
-                    accountService.Withdraw(account, dateObj, amount);
-                }
-                else
-                {
-                    userInterface.DisplayMessage("Invalid transaction type. Use 'D' for deposit or 'W' for withdrawal.");
-                    return;
-                }
-
-                userInterface.DisplayMessage("Transaction recorded successfully.");
-
-            }
-            else
-            {
-                userInterface.DisplayMessage("Invalid input format. Please use <Date> <Account> <Type> <Amount>.");
-            }
-        }
-
-    }
-*/
 }
 
 public interface IInterestRuleManager
@@ -343,16 +274,6 @@ public class StatementPrinter : IStatementPrinter
             return;
         }
 
-        /*Retrieve the account or create it if it doesn't exist
-       var account = new Account(accountNumber, dbContext);
-       account.CreateAccountIfNotExist(accountNumber);
-
-       if (account == null)
-       {
-           userInterface.DisplayMessage("Account not found or creation failed.");
-           return;
-       }*/
-
         // Calculate and print the account statement
         PrintAccountStatement(new Account(accountNumber), year, month);
         userInterface.DisplayMessage("Transaction recorded successfully.");
@@ -411,7 +332,7 @@ public class StatementPrinter : IStatementPrinter
     private decimal GetInterestRateForDate(string accountNumber, DateTime date)
     {
         var applicableRules = dbContext.InterestRules
-            .Where(r => r.Date <= date) // 202305
+            .Where(r => r.Date <= date)
             .OrderByDescending(r => r.Date)
             .ToList();
 
@@ -659,7 +580,7 @@ public class AccountRepository : IAccountRepository
             .Where(t => t.AccountNumber == accountNumber).AsEnumerable().FirstOrDefault();
         if (account != null && account.AccountId > 0)
         {
-            return account as Account;
+            return account;
         }
         else
         {
